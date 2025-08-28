@@ -10,6 +10,7 @@ from fastapi import FastAPI, UploadFile, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from flask_cors import CORS
 
 from PIL import Image
 import imagehash
@@ -33,16 +34,19 @@ else:
 # One shared password for zip downloads
 DOWNLOAD_PASSWORD = os.getenv("DOWNLOAD_PASSWORD", "supersecret")
 
-app = FastAPI(title="Photo Gallery API")
+app = FastAPI(title="Calysta and Trevor Photos")
 
-# CORS for development; restrict origins in production
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Allowed origins
+allowed_origins = [
+    "http://173.236.139.136",
+    "https://173.236.139.136",
+    "http://3.14.83.137",
+    "https://3.14.83.137",
+    "http://localhost:3000",   # React dev
+    "http://127.0.0.1:3000"    # Alternative localhost
+]
+
+CORS(app, resources={r"/*": {"origins": allowed_origins}})
 
 # Serve uploaded files statically
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
