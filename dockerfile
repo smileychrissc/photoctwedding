@@ -1,35 +1,32 @@
-# Base Python image
 FROM python:3.11-slim
 
-# Install system packages: nginx, supervisor, openssl for self-signed cert
-RUN apt-get update && \
-    apt-get install -y nginx supervisor openssl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Set workdir
 WORKDIR /app
 
-# Install Python dependencies
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends nginx curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy Python dependencies and install
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
-# Copy backend source
-COPY ./backend/*.py .
+# Copy app code
+COPY ./backend/*.py /app/
 
-# Copy Nginx & Supervisor configs
-COPY nginx.conf /etc/nginx/sites-available/default
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Remove default nginx config
+RUN rm /etc/nginx/sites-enabled/default
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Generate self-signed certificate (valid 365 days)
-RUN mkdir -p /etc/ssl/private && \
-    openssl req -x509 -nodes -days 365 \
-    -newkey rsa:2048 \
-    -keyout /etc/ssl/private/selfsigned.key \
-    -out /etc/ssl/certs/selfsigned.crt \
-    -subj "/CN=localhost"
+# Expose HTTP port
+EXPOSE 80
 
-# Expose HTTP and HTTPS ports
-EXPOSE 80 443
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Start supervisord (manages Nginx + Gunicorn)
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Create uploads folder
+RUN mkdir -p /app/uploads
+
+# Use JSON form CMD to avoid shell signal issues
+CMD ["/entrypoint.sh"]

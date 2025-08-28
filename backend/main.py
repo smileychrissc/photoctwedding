@@ -6,10 +6,7 @@ import json
 from pathlib import Path
 from typing import List
 
-from fastapi import FastAPI, UploadFile, HTTPException, Header
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from PIL import Image
@@ -20,6 +17,7 @@ import zipfile
 APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = APP_ROOT / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
 HASH_INDEX_FILE = UPLOAD_DIR / "hash_index.json"
 if HASH_INDEX_FILE.exists():
@@ -31,10 +29,12 @@ if HASH_INDEX_FILE.exists():
 else:
     HASH_INDEX = {}
 
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
+
 # One shared password for zip downloads
 DOWNLOAD_PASSWORD = os.getenv("DOWNLOAD_PASSWORD", "supersecret")
 
-app = FastAPI(title="Calysta and Trevor Photos")
+app = Flask(__name__)
 
 # Allowed origins
 allowed_origins = [
@@ -45,12 +45,12 @@ allowed_origins = [
     "http://localhost:3000",   # React dev
     "http://127.0.0.1:3000"    # Alternative localhost
 ]
+app.config["MAX_CONTENT_LENGTH"] = 70 * 1024 * 1024     # 70Mb
 
 CORS(app, resources={r"/*": {"origins": allowed_origins}})
 
-# Serve uploaded files statically
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
-
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def perceptual_hash(file_bytes: bytes) -> str:
     """Return a perceptual hash string for given image bytes."""
@@ -59,8 +59,8 @@ def perceptual_hash(file_bytes: bytes) -> str:
     return str(phash)
 
 
-@app.get("/images")
-async def list_images():
+@app.route("/images", methods=["GET"])
+def list_images():
     """Public list of images for the gallery (filenames + URLs)."""
     files = []
     for f in UPLOAD_DIR.iterdir():
@@ -71,12 +71,20 @@ async def list_images():
     return files
 
 
-@app.post("/upload")
-async def upload(files: List[UploadFile]):
+@app.route("/upload", methods=["POST"])
+def upload_images():
     """Upload multiple images; generate unique names; detect perceptual duplicates."""
+    if "files" not in request.files:
+        return jsonify({"error": "No images part"}), 400
+
+    files = request.files.getlist("files")
+
     uploaded = []
     for file in files:
-        content = await file.read()
+        if not file or not allowed_file(file.filename):
+            continue
+
+        content = file.read()
         try:
             h = perceptual_hash(content)
         except Exception:
@@ -97,6 +105,7 @@ async def upload(files: List[UploadFile]):
         ext = os.path.splitext(file.filename)[1] or ".jpg"
         unique_name = f"{uuid.uuid4().hex}{ext}"
         filepath = UPLOAD_DIR / unique_name
+        print('HACK: WRITING:',filepath,flush=True)
         with open(filepath, "wb") as buffer:
             buffer.write(content)
 
@@ -115,11 +124,21 @@ async def upload(files: List[UploadFile]):
     return {"uploaded": uploaded}
 
 
-@app.post("/download")
-async def download_images(filenames: List[str], x_password: str = Header(None)):
-    """Password-protected bulk download as a ZIP (shared secret)."""
+@app.route("/download", methods=["POST"])
+def download_multiple():
+    """
+    Expects:
+    - Header: x-password: your_shared_password_here
+    - JSON body: { "filenames": ["image1.jpg", "image2.png"] }
+    """
+    x_password = request.headers.get("x-password")
     if x_password != DOWNLOAD_PASSWORD:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Expecting a JSON array of filenames
+    filenames = request.get_json()
+    if not filenames or not isinstance(filenames, list):
+        return jsonify({"error": "No filenames provided"}), 400
 
     # Validate requested files
     files_to_zip = []
@@ -137,3 +156,27 @@ async def download_images(filenames: List[str], x_password: str = Header(None)):
             z.write(f, arcname=f.name)
 
     return FileResponse(tmp.name, media_type="application/zip", filename="photos_bundle.zip")
+
+
+@app.route("/uploads/<filename>")
+def serve_image(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
+
+
+@app.route("/download/<filename>", methods=["GET"])
+def download_image(filename):
+    password = request.args.get("password")
+    if password != DOWNLOAD_PASSWORD:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        return jsonify({"error": "File not found"}), 404
+
+    return send_from_directory(UPLOAD_DIR, filename, as_attachment=True)
+
+@app.after_request
+def add_custom_headers(response):
+    response.headers["X-App-Name"] = "Photo Gallery Backend"
+    return response
+

@@ -125,7 +125,7 @@ export default function App() {
   }, [open, showPrev, showNext]);
 
   return (
-    <Container id="wrapper" minWidth="md" sx={{ py: 4, minWidth:'100vw', minHeight:'100vh'}} style={{padding:'0px' }}>
+    <Container id="wrapper" maxWidth="md" sx={{ py: 4, minWidth:'100vw', minHeight:'100vh'}} style={{padding:'0px' }}>
       <Box
         id="title-wrapper"
         display="flex"

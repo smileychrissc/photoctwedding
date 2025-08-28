@@ -1,7 +1,5 @@
+Flask
 flask-cors
-fastapi
-uvicorn
 gunicorn
-python-multipart
-pillow
-imagehash
+Pillow
+ImageHash
