@@ -1,32 +1,40 @@
-FROM python:3.11-slim
+# Stage 1: Build React frontend
+FROM node:18 AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
 
+# Stage 2: Build Python backend
+FROM python:3.11-slim AS backend-build
 WORKDIR /app
-
-# Install dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends nginx curl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy Python dependencies and install
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn
+COPY backend/ ./backend
 
-# Copy app code
-COPY ./backend/*.py /app/
+# Stage 3: Final image with Nginx + Gunicorn + UI
+FROM nginx:alpine
+WORKDIR /app
 
-# Remove default nginx config
-RUN rm /etc/nginx/sites-enabled/default
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Install Python + Gunicorn
+RUN apk add --no-cache python3 py3-pip bash && \
+    pip3 install --upgrade pip
 
-# Expose HTTP port
-EXPOSE 80
+COPY --from=backend-build /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=backend-build /usr/local/bin/gunicorn /usr/local/bin/gunicorn
+COPY --from=backend-build /app/backend /app/backend
 
-# Copy entrypoint script
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Copy React build into nginx html folder
+COPY --from=frontend-build /app/frontend/build /usr/share/nginx/html
 
-# Create uploads folder
-RUN mkdir -p /app/uploads
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Use JSON form CMD to avoid shell signal issues
-CMD ["/entrypoint.sh"]
+# Expose HTTP & HTTPS
+EXPOSE 80 443
+
+# Start Gunicorn and Nginx
+CMD sh -c "\
+    gunicorn -w 4 -b 127.0.0.1:8000 backend.app:app & \
+    nginx -g 'daemon off;'"
