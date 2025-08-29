@@ -47,7 +47,8 @@ allowed_origins = [
 ]
 app.config["MAX_CONTENT_LENGTH"] = 70 * 1024 * 1024     # 70Mb
 
-CORS(app, resources={r"/*": {"origins": allowed_origins}})
+#CORS(app, resources={r"/*": {"origins": allowed_origins}})
+CORS(app, resources={r"/*": {"origins": "*"}})   # allow all origins
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
