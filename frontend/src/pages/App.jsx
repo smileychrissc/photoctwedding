@@ -22,7 +22,7 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { useSwipeable } from "react-swipeable";
 
-const API_BASE = process.env.REACT_APP_API_BASE || "http://18.222.102.87";
+const API_BASE = "http://18.222.102.87" || process.env.REACT_APP_API_BASE;
 
 export default function App() {
   const theme = useTheme();
@@ -38,6 +38,7 @@ export default function App() {
   const isPhone = useMediaQuery(theme.breakpoints.down("sm"));
 
   async function loadImages() {
+    console.log('HACK: LOAD APIBASE',API_BASE);
     const { data } = await axios.get(`${API_BASE}/images`);
     const abs = data.map((x) => ({
       ...x,
@@ -62,6 +63,7 @@ export default function App() {
     files.forEach((f) => form.append("files", f, f.name));
 
     try {
+      console.log('HACK: UPLOAD APIBASE',API_BASE);
       await axios.post(`${API_BASE}/upload`, form, {
         headers: { "Content-Type": "multipart/form-data" },
         onUploadProgress: (evt) => {
