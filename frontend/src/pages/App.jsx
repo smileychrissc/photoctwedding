@@ -22,7 +22,7 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { useSwipeable } from "react-swipeable";
 
-const API_BASE = process.env.REACT_APP_API_BASE || "https://photoctwedding.com";
+const API_BASE = process.env.REACT_APP_API_BASE || "https://18.220.61.19";
 
 export default function App() {
   const theme = useTheme();

@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import axios from "axios";
 
-const API_BASE = process.env.REACT_APP_API_BASE || "https://photoctwedding.com";
+const API_BASE = process.env.REACT_APP_API_BASE || "https://18.220.61.19";
 
 export default function DownloadPage() {
   const [password, setPassword] = useState("");
