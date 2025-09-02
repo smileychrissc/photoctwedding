@@ -1,19 +1,16 @@
-
 import { useEffect, useRef, useState, useCallback } from "react";
-import axios from "axios";
 import {
   Box,
   Container,
   Typography,
   Button,
-  Fragment,
   Grid,
   Card,
   CardMedia,
   LinearProgress,
   Dialog,
   IconButton,
-  useMediaQuery
+  useMediaQuery,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import CloseIcon from "@mui/icons-material/Close";
@@ -22,7 +19,7 @@ import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { useSwipeable } from "react-swipeable";
 
-const API_BASE = "http://18.222.102.87" || process.env.REACT_APP_API_BASE;
+const API_BASE = window._env_?.REACT_APP_API_BASE || "http://localhost:80";
 
 export default function App() {
   const theme = useTheme();
@@ -34,17 +31,25 @@ export default function App() {
   const [activeIndex, setActiveIndex] = useState(null);
   const fileRef = useRef(null);
 
-  // Detect if screen width is "small" (e.g., phone)
   const isPhone = useMediaQuery(theme.breakpoints.down("sm"));
 
+  // ---- Fetch helpers ----
   async function loadImages() {
-    console.log('HACK: LOAD APIBASE',API_BASE);
-    const { data } = await axios.get(`${API_BASE}/images`);
-    const abs = data.map((x) => ({
-      ...x,
-      absUrl: x.url.startsWith("http") ? x.url : `${API_BASE}${x.url}`,
-    }));
-    setImages(abs);
+    try {
+      console.log("LOAD APIBASE", API_BASE);
+      const res = await fetch(`${API_BASE}/images`);
+      if (!res.ok) throw new Error(`Failed to fetch images (${res.status})`);
+      const data = await res.json();
+
+      const abs = data.map((x) => ({
+        ...x,
+        absUrl: x.url.startsWith("http") ? x.url : `${API_BASE}${x.url}`,
+      }));
+      setImages(abs);
+    } catch (err) {
+      console.error(err);
+      alert("Error loading images");
+    }
   }
 
   useEffect(() => {
@@ -55,28 +60,51 @@ export default function App() {
     setFiles(Array.from(e.target.files || []));
   }
 
+  // ---- Upload with fetch + progress polyfill ----
   async function upload() {
     if (!files.length) return;
     setBusy(true);
     setProgress(0);
+
     const form = new FormData();
     files.forEach((f) => form.append("files", f, f.name));
 
     try {
-      console.log('HACK: UPLOAD APIBASE',API_BASE);
-      await axios.post(`${API_BASE}/upload`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-        onUploadProgress: (evt) => {
-          if (!evt.total) return;
-          const pct = Math.round((evt.loaded / evt.total) * 100);
-          setProgress(pct);
-        },
-      }).then(res => {
-        if (res?.data?.uploaded) {
-          const dupes = res.data.uploaded.filter(u => u.duplicate).map(u => u.original);
-          if (dupes.length) console.log("Duplicates skipped:", dupes.join(", "));
-        }
+      console.log("UPLOAD APIBASE", API_BASE);
+
+      // Manual XMLHttpRequest for progress support
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API_BASE}/upload`);
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            const pct = Math.round((evt.loaded / evt.total) * 100);
+            setProgress(pct);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const res = JSON.parse(xhr.responseText);
+              if (res?.uploaded) {
+                const dupes = res.uploaded
+                  .filter((u) => u.duplicate)
+                  .map((u) => u.original);
+                if (dupes.length)
+                  console.log("Duplicates skipped:", dupes.join(", "));
+              }
+              resolve(res);
+            } catch (err) {
+              reject(err);
+            }
+          } else {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error("Network error during upload"));
+        xhr.send(form);
       });
+
       setFiles([]);
       if (fileRef.current) fileRef.current.value = "";
       await loadImages();
@@ -89,11 +117,11 @@ export default function App() {
     }
   }
 
+  // ---- Gallery navigation ----
   function handleOpen(index) {
     setActiveIndex(index);
     setOpen(true);
   }
-
   function handleClose() {
     setOpen(false);
     setActiveIndex(null);
@@ -126,8 +154,15 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [open, showPrev, showNext]);
 
+  // ---- Render ----
   return (
-    <Container id="wrapper" maxWidth="md" sx={{ py: 4, minWidth:'100vw', minHeight:'100vh'}} style={{padding:'0px' }}>
+    <Container
+      id="wrapper"
+      maxWidth="md"
+      sx={{ py: 4, minWidth: "100vw", minHeight: "100vh" }}
+      style={{ padding: "0px" }}
+    >
+      {/* header */}
       <Box
         id="title-wrapper"
         display="flex"
@@ -136,7 +171,11 @@ export default function App() {
         justifyContent="space-between"
         mb={3}
         gap={isPhone ? 1 : 2}
-        sx={{backgroundColor:'#C2DED1', padding:isPhone ? '24px 15px 10px 15px': '24px 15px 0px 15px', borderBotton:'1px solid black', margin:'0px'}}
+        sx={{
+          backgroundColor: "#C2DED1",
+          padding: isPhone ? "24px 15px 10px 15px" : "24px 15px 0px 15px",
+          margin: "0px",
+        }}
       >
         <Typography variant={isPhone ? "h4" : "h2"} fontWeight="200">
           Trevor & Calysta Photos
@@ -165,19 +204,40 @@ export default function App() {
           </Button>
         </Box>
       </Box>
-      <Grid container direction="column" alignItems="start" justifyContent="start" 
-            sx={{backgroundColor:'#C2DED1', padding:isPhone ? '0px 24px 5px 24px': '0px 24px 0px 24px', borderBottom:'1px solid grey', boxShadow:'5px 5px 5px lightgrey', marginBottom:'10px'}}
+
+      {/* instructions */}
+      <Grid
+        container
+        direction="column"
+        alignItems="start"
+        justifyContent="start"
+        sx={{
+          backgroundColor: "#C2DED1",
+          padding: isPhone ? "0px 24px 5px 24px" : "0px 24px 0px 24px",
+          borderBottom: "1px solid grey",
+          boxShadow: "5px 5px 5px lightgrey",
+          mb: "10px",
+        }}
       >
-        <Typography variant="body1" sx={{color:'dimgrey', fontSize:'smaller'}}>
+        <Typography variant="body1" sx={{ color: "dimgrey", fontSize: "smaller" }}>
           1&#183; Choose the images to upload
         </Typography>
-        <Typography variant="body1" sx={{color:'dimgrey', fontSize:'smaller'}}>
+        <Typography variant="body1" sx={{ color: "dimgrey", fontSize: "smaller" }}>
           2&#183; Click the upload button to upload them
         </Typography>
       </Grid>
 
+      {/* selected files preview */}
       {files.length > 0 && (
-        <Box id="wedding-selected" mb={3} sx={{padding:'0px 24px 0px 24px',borderBottom:'1px solid grey', boxShadow:'5px 5px 5px lightgrey'}}>
+        <Box
+          id="wedding-selected"
+          mb={3}
+          sx={{
+            padding: "0px 24px 0px 24px",
+            borderBottom: "1px solid grey",
+            boxShadow: "5px 5px 5px lightgrey",
+          }}
+        >
           <Typography variant="body2" color="text.secondary" mb={1}>
             {files.length} selected
           </Typography>
@@ -208,7 +268,13 @@ export default function App() {
         </Box>
       )}
 
-      <Grid id="images-wrapepr" container spacing={2} sx={{padding:'0px 24px 0px 24px'}}>
+      {/* gallery grid */}
+      <Grid
+        id="images-wrapepr"
+        container
+        spacing={2}
+        sx={{ padding: "0px 24px 0px 24px" }}
+      >
         {images.map((img, idx) => (
           <Grid item xs={6} sm={4} md={3} key={img.filename}>
             <Card
@@ -226,6 +292,7 @@ export default function App() {
         ))}
       </Grid>
 
+      {/* lightbox */}
       <Dialog
         fullScreen
         open={open}

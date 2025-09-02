@@ -1,5 +1,4 @@
-
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Container,
   Box,
@@ -10,28 +9,48 @@ import {
   Card,
   CardMedia,
   Checkbox,
+  CircularProgress,
 } from "@mui/material";
-import axios from "axios";
 
-const API_BASE = "http://18.222.102.87" || process.env.REACT_APP_API_BASE;
+const API_BASE = window._env_?.REACT_APP_API_BASE || "http://localhost:80";
+
+// Helper for API calls with error handling
+async function apiFetch(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, options);
+  if (!res.ok) {
+    const msg = await res.text();
+    throw new Error(msg || `Error ${res.status}`);
+  }
+  return res;
+}
 
 export default function DownloadPage() {
   const [password, setPassword] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [images, setImages] = useState([]);
   const [selected, setSelected] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   async function login() {
+    setLoading(true);
     try {
-      const { data } = await axios.get(`${API_BASE}/images`);
+      const res = await apiFetch("/images", {
+        headers: { "x-password": password },
+      });
+      const data = await res.json();
+
       const abs = data.map((x) => ({
         ...x,
         absUrl: x.url.startsWith("http") ? x.url : `${API_BASE}${x.url}`,
       }));
+
       setImages(abs);
       setAuthorized(true);
     } catch (err) {
-      alert("Server unreachable");
+      alert("Invalid password or server unreachable.");
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -46,31 +65,38 @@ export default function DownloadPage() {
   async function downloadSelected() {
     if (!selected.length) return;
     try {
-      const res = await axios.post(`${API_BASE}/download`, selected, {
-        responseType: "blob",
+      const res = await apiFetch("/download", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-password": password,
         },
+        body: JSON.stringify(selected),
       });
 
-      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+
       const link = document.createElement("a");
       link.href = url;
       link.setAttribute("download", "photos_bundle.zip");
       document.body.appendChild(link);
       link.click();
       link.remove();
+
+      window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
-      alert("Download failed. Check the password.");
+      alert("Download failed. Check the password or try again.");
     }
   }
 
   if (!authorized) {
     return (
-      <Container maxWidth="sm" sx={{ py: 10 }}>
-        <Typography variant="h5" mb={2}>🔐 Enter Password</Typography>
+      <Container maxWidth="sm" sx={{ py: 10, textAlign: "center" }}>
+        <Typography variant="h5" mb={2}>
+          🔐 Enter Password
+        </Typography>
         <TextField
           fullWidth
           type="password"
@@ -84,8 +110,9 @@ export default function DownloadPage() {
           variant="contained"
           sx={{ mt: 2 }}
           onClick={login}
+          disabled={!password || loading}
         >
-          Unlock
+          {loading ? <CircularProgress size={24} /> : "Unlock"}
         </Button>
       </Container>
     );

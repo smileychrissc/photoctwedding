@@ -1,18 +1,17 @@
-
 import os
 import io
 import uuid
 import json
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import List
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-
+from werkzeug.exceptions import HTTPException
 from PIL import Image
 import imagehash
-import tempfile
-import zipfile
 
 APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = APP_ROOT / "uploads"
@@ -29,58 +28,47 @@ if HASH_INDEX_FILE.exists():
 else:
     HASH_INDEX = {}
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
-
-# One shared password for zip downloads
+# Shared password for downloads
 DOWNLOAD_PASSWORD = os.getenv("DOWNLOAD_PASSWORD", "supersecret")
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 70 * 1024 * 1024  # 70 MB
 
-# Allowed origins
-allowed_origins = [
-    "http://173.236.139.136",
-    "https://173.236.139.136",
-    "http://3.14.83.137",
-    "https://3.14.83.137",
-    "http://localhost:3000",   # React dev
-    "http://127.0.0.1:3000"    # Alternative localhost
-]
-app.config["MAX_CONTENT_LENGTH"] = 70 * 1024 * 1024     # 70Mb
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-#CORS(app, resources={r"/*": {"origins": allowed_origins}})
-CORS(app, resources={r"/*": {"origins": "*"}})   # allow all origins
 
-def allowed_file(filename):
+def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 def perceptual_hash(file_bytes: bytes) -> str:
     """Return a perceptual hash string for given image bytes."""
     image = Image.open(io.BytesIO(file_bytes))
-    phash = imagehash.average_hash(image)  # robust to metadata/quality changes
+    phash = imagehash.average_hash(image)
     return str(phash)
 
 
 @app.route("/images", methods=["GET"])
 def list_images():
-    """Public list of images for the gallery (filenames + URLs)."""
+    """List uploaded images for the gallery."""
     files = []
     for f in UPLOAD_DIR.iterdir():
         if f.is_file() and f.name != HASH_INDEX_FILE.name:
-            files.append({ "filename": f.name, "url": f"/uploads/{f.name}" })
+            files.append({"filename": f.name, "url": f"/uploads/{f.name}"})
     # Sort newest first
     files.sort(key=lambda x: (UPLOAD_DIR / x["filename"]).stat().st_mtime, reverse=True)
-    return files
+    return jsonify(files)
 
 
 @app.route("/upload", methods=["POST"])
 def upload_images():
-    """Upload multiple images; generate unique names; detect perceptual duplicates."""
+    """Upload multiple images with duplicate detection."""
     if "files" not in request.files:
         return jsonify({"error": "No images part"}), 400
 
     files = request.files.getlist("files")
-
     uploaded = []
+
     for file in files:
         if not file or not allowed_file(file.filename):
             continue
@@ -89,9 +77,9 @@ def upload_images():
         try:
             h = perceptual_hash(content)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid image: {file.filename}")
+            raise HTTPException(description=f"Invalid image: {file.filename}", code=400)
 
-        # Duplicate (perceptual) → reuse stored file
+        # Duplicate
         if h in HASH_INDEX:
             stored_name = HASH_INDEX[h]
             uploaded.append({
@@ -102,11 +90,10 @@ def upload_images():
             })
             continue
 
-        # New file → unique filename, keep extension
+        # New file
         ext = os.path.splitext(file.filename)[1] or ".jpg"
         unique_name = f"{uuid.uuid4().hex}{ext}"
         filepath = UPLOAD_DIR / unique_name
-        print('HACK: WRITING:',filepath,flush=True)
         with open(filepath, "wb") as buffer:
             buffer.write(content)
 
@@ -118,11 +105,10 @@ def upload_images():
             "url": f"/uploads/{unique_name}"
         })
 
-    # persist index
     with open(HASH_INDEX_FILE, "w") as f:
         json.dump(HASH_INDEX, f)
 
-    return {"uploaded": uploaded}
+    return jsonify({"uploaded": uploaded})
 
 
 @app.route("/download", methods=["POST"])
@@ -130,33 +116,33 @@ def download_multiple():
     """
     Expects:
     - Header: x-password: your_shared_password_here
-    - JSON body: { "filenames": ["image1.jpg", "image2.png"] }
+    - JSON body: ["image1.jpg", "image2.png"]
     """
     x_password = request.headers.get("x-password")
     if x_password != DOWNLOAD_PASSWORD:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        return jsonify({"error": "Unauthorized"}), 401
 
-    # Expecting a JSON array of filenames
     filenames = request.get_json()
     if not filenames or not isinstance(filenames, list):
         return jsonify({"error": "No filenames provided"}), 400
 
-    # Validate requested files
     files_to_zip = []
     for name in filenames:
         p = UPLOAD_DIR / name
         if p.exists() and p.is_file():
             files_to_zip.append(p)
-    if not files_to_zip:
-        raise HTTPException(status_code=404, detail="No valid files requested")
 
-    # Create a temp ZIP
+    if not files_to_zip:
+        return jsonify({"error": "No valid files requested"}), 404
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
         for f in files_to_zip:
             z.write(f, arcname=f.name)
 
-    return FileResponse(tmp.name, media_type="application/zip", filename="photos_bundle.zip")
+    from flask import send_file
+    return send_file(tmp.name, mimetype="application/zip",
+                     as_attachment=True, download_name="photos_bundle.zip")
 
 
 @app.route("/uploads/<filename>")
@@ -170,14 +156,18 @@ def download_image(filename):
     if password != DOWNLOAD_PASSWORD:
         return jsonify({"error": "Unauthorized"}), 401
 
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if not os.path.exists(file_path):
+    file_path = UPLOAD_DIR / filename
+    if not file_path.exists():
         return jsonify({"error": "File not found"}), 404
 
     return send_from_directory(UPLOAD_DIR, filename, as_attachment=True)
+
 
 @app.after_request
 def add_custom_headers(response):
     response.headers["X-App-Name"] = "Photo Gallery Backend"
     return response
 
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
