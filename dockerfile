@@ -1,12 +1,12 @@
 # ---------- Build Frontend ----------
-FROM node:18 AS frontend-build
+FROM node:18-alpine AS frontend-build
 WORKDIR /app/frontend
 
-# Install frontend dependencies
+# Install only production dependencies
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm ci --only=production
 
-# Copy source and build React app
+# Build React app
 COPY frontend/ ./
 RUN npm run build
 
@@ -14,50 +14,31 @@ RUN npm run build
 FROM python:3.11-slim AS backend-build
 WORKDIR /app
 
-# Install system dependencies needed for Pillow/imagehash
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libjpeg-dev \
-    zlib1g-dev \
-    libpng-dev \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python dependencies in a virtualenv
+RUN python -m venv /venv
+ENV PATH="/venv/bin:$PATH"
 
-# Install Python dependencies
+# Install dependencies
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt gunicorn flask-cors pillow imagehash
 
+# Copy backend code
 COPY backend/ ./backend
 
 # ---------- Final Image ----------
+WORKDIR /app
 FROM nginx:1.25
 
-# Install Python and system dependencies
-RUN apt-get update && apt-get install -y \
-    python3 python3-venv python3-pip \
-    build-essential \
-    libjpeg-dev \
-    zlib1g-dev \
-    libpng-dev \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python runtime (slim)
+RUN apk add --no-cache python3 py3-pip bash && \
+    python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
 
-WORKDIR /app
-
-# Copy backend and requirements
+# Copy backend code & dependencies
+COPY --from=backend-build /venv /venv
 COPY --from=backend-build /app/backend ./backend
-COPY backend/requirements.txt .
 
-# Create virtual environment
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Install dependencies inside virtual environment
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir gunicorn flask-cors pillow imagehash
-
-# Copy frontend build
+# Copy frontend build to nginx html
 COPY --from=frontend-build /app/frontend/build /usr/share/nginx/html
 
 # Copy nginx config
