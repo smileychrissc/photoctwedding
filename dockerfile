@@ -26,8 +26,8 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn flask-cors pillow im
 COPY backend/ ./backend
 
 # ---------- Final Image ----------
+FROM nginx:1.25-alpine
 WORKDIR /app
-FROM nginx:1.25
 
 # Install Python runtime (slim)
 RUN apk add --no-cache python3 py3-pip bash && \
