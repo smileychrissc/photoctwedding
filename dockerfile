@@ -10,33 +10,20 @@ RUN npm ci --only=production
 COPY frontend/ ./
 RUN npm run build
 
-# ---------- Build Backend ----------
-FROM python:3.11-slim AS backend-build
-WORKDIR /app
-
-# Install Python dependencies in a virtualenv
-RUN python -m venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Install dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn flask-cors pillow imagehash
-
-# Copy backend code
-COPY backend/ ./backend
 
 # ---------- Final Image ----------
 FROM nginx:1.25-alpine
 WORKDIR /app
 
 # Install Python runtime (slim)
-RUN apk add --no-cache python3 py3-pip bash && \
-    python3 -m venv /venv
-ENV PATH="/venv/bin:$PATH"
+RUN apk add --no-cache python3 py3-pip bash
 
-# Copy backend code & dependencies
-COPY --from=backend-build /venv /venv
-COPY --from=backend-build /app/backend ./backend
+# Install dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt gunicorn flask-cors pillow imagehash --break-system-packages
+
+# Copy backend code
+COPY backend/ ./backend
 
 # Copy frontend build to nginx html
 COPY --from=frontend-build /app/frontend/build /usr/share/nginx/html
